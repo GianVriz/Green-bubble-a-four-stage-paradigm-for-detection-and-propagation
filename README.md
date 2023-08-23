@@ -10,3 +10,6 @@ The repository includes the following folders,
 [RENIXX World - Global Stock Index](https://www.renewable-energy-industry.com/stocks/)
 
 [Energy Index - Google Trends](https://trends.google.it/trends/explore?date=all&q=Energy%20index&hl=it)
+
+ <p align="center">
+ <img src="https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Working%20paper/Bubble_d.pdf" alt="drawing" width="350" height="200"/> 
