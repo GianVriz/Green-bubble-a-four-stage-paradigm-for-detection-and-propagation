@@ -6,5 +6,6 @@ The repository includes the following folders,
 * *[Working paper](https://github.com/GianVriz/Green-Bubbles/tree/main/Working%20paper)* 
 * *[Code](https://github.com/GianVriz/Green-Bubbles/tree/main/Code)*
 
-[RENIXX World - Global Stock Index](https://www.renewable-energy-industry.com/stocks/)*
-[Energy Index - Goggle Trends](https://trends.google.it/trends/explore?date=all&q=Energy%20index&hl=it)*
+[RENIXX World - Global Stock Index](https://www.renewable-energy-industry.com/stocks/)
+
+[Energy Index - Goggle Trends](https://trends.google.it/trends/explore?date=all&q=Energy%20index&hl=it)
