@@ -4,8 +4,8 @@ While these phenomena can be examined through a social bubble hypothesis, it is 
 
   # Info
 The repository includes the following folders,
-* *[Working paper](https://github.com/GianVriz/Green-Bubbles/tree/main/Working%20paper)* 
-* *[Code](https://github.com/GianVriz/Green-Bubbles/tree/main/Code)*
+* *[Working paper](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Working%20paper)* 
+* *[Code](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Code)*
 
 [RENIXX World - Global Stock Index](https://www.renewable-energy-industry.com/stocks/)
 
