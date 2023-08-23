@@ -12,4 +12,4 @@ The repository includes the following folders,
 [Energy Index - Google Trends](https://trends.google.it/trends/explore?date=all&q=Energy%20index&hl=it)
 
  <p align="center">
- <img src="https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/blob/main/Working%20paper/Bubble_d.jpg" alt="drawing" width="1000" height="250"/> 
+ <img src="https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/blob/main/Working%20paper/Bubble_d.jpg" alt="drawing" width="1000" height="320"/> 
