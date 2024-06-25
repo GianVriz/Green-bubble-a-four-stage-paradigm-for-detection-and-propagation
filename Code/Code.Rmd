@@ -1,0 +1,1848 @@
+---
+title: "Green Bubbles: A Four-Stage Paradigm for Detection and Propagation"
+author: "GLV_LG"
+date: "2024-03-27"
+output: html_document
+---
+
+# Libraries
+
+The following chunks are related to the article *Green Bubbles: A Four-Stage Paradigm for Detection and Propagation*. The project includes the following libraries.
+
+```{r, warning=FALSE}
+library(exuber)
+library(readr)
+library(bsts)
+library(dplyr)
+library(pscl)
+library(car)
+library(DescTools)
+library(ModelMetrics)
+library(fDMA)
+library(hrbrthemes)
+library(ggpmisc)
+library(Rlibeemd)
+library(xtable)
+library(dtw)
+library(lmtest)
+library(Metrics)
+library(tseries)
+library(urca)
+library(vars)
+library(factoextra)
+library(ggfortify)
+library(modelr)
+library(readxl)
+library(epiDisplay)
+library(blorr)
+library(gridExtra)
+library(oddsratio)
+library(tictoc)
+library(Rbeast)
+library(bbdetection)
+library(devtools)
+library(rbmi)
+library(dplyr)
+library(ggplot2)
+library(ghyp)
+library(lubridate)
+library(strucchange)
+library(changepoint)
+library(Rssa)
+library(tidyr)
+library(qcc)
+library(corrplot)
+library(zoo)
+library(rugarch)
+library(cpm)
+library(visreg)
+library(urca)
+library(glmnet)
+library(psych)
+```
+
+# Data generation Process and simulations
+
+Firstly, the data generation of bubbles phenomena is outlined.
+
+```{r, warning=FALSE}
+#Function class
+add_class <- function(x, ...) {
+  class(x) <- append(c(...), class(x))
+  x
+}
+#DATA
+#https://rdrr.io/rforge/rugarch/man/sp500ret.html
+#https://rdrr.io/rforge/rugarch/man/dmbp.html
+data("sp500ret")
+data_garch = sp500ret * 100 #%
+#GARCH
+spec <-
+  ugarchspec(
+    variance.model = list(model = "eGARCH", garchOrder = c(1, 1))
+    ,
+    distribution.model = "ghyp"
+  )
+fit = ugarchfit(data = data_garch , spec = spec)
+#Residuals
+garch_resid <- residuals(fit, standardize = FALSE)
+#Extract standardized residuals
+garch_resid_std <- residuals(fit, standardize = TRUE)
+#Standardized residuals to be used in ugarchsim()
+custom_dist = list(name = "sample", distfit = matrix(garch_resid_std, ncol = 1))
+m_ <- fit@model$maxOrder
+garch_sim <- ugarchsim(
+  fit,
+  n.sim = length(garch_resid_std),
+  m.sim = 1,
+  presigma = tail(fit@fit$sigma, m_),
+  prereturns = tail(sp500ret, m_),
+  #Preresiduals ARE NOT standardized:
+  preresiduals = tail(garch_resid, m_),
+  startMethod = "sample",
+  #Distfit in custom.dist ARE standardized
+  custom.dist = custom_dist
+)
+#Extract simulated series
+sp_sim <- garch_sim@simulation$seriesSim
+#Test
+sp_df <- cbind(sp500ret, sim = sp_sim) %>%
+  setNames(c("ret", "sim")) %>%
+  as_tibble(rownames = "date") %>%
+  mutate(date = as.Date(date), diff = sim - ret)
+egarch <- function(n_sim) {
+  garch_sim <- ugarchsim(
+    fit,
+    n.sim = n_sim,
+    m.sim = 1,
+    presigma = tail(fit@fit$sigma, m_),
+    prereturns = tail(sp500ret, m_),
+    #Preresiduals ARE NOT standardized:
+    preresiduals = tail(garch_resid, m_),
+    startMethod = "sample",
+    #Distfit in custom.dist ARE standardized
+    #Custom.dist = custom_dist
+  )
+  values = as.numeric(garch_sim@simulation$seriesSim)
+  return(values)
+}
+```
+
+Three different bubble patterns are being considered.
+
+```{r, warning=FALSE}
+#Bubble's collapse pattern from https://rdrr.io/cran/exuber/src/R/sim.R
+bubble <- function(n,
+                   te = 0.4 * n,
+                   tf = te + 0.2 * n ,
+                   tr = tf + 0.1 * n,
+                   c = 1,
+                   c1 = 1,
+                   c2 = 1,
+                   eta = 0.6,
+                   alpha = 0.6,
+                   beta = 0.5) {
+  drift <- c * n ^ (-eta)
+  delta <- 1 + c1 * n ^ (-alpha)
+  gamma <- 1 - c2 * n ^ (-beta)
+  y <- 100
+  err <- egarch(n) * 1.5 #Error term following an egarch process multiply by a constant factor
+  for (t in 2:n) {
+    if (t < te) {
+      y[t] <- drift + y[t - 1] + err[t]
+    } else if (t >= te & t <= tf) {
+      y[t] <- delta * y[t - 1] + err[t]
+    } else if (t > tf & t <= tr) {
+      y[t] <- gamma * y[t - 1] + err[t]
+    } else {
+      y[t] <- drift + y[t - 1] + err[t]
+    }
+  }
+  y %>%
+    add_class("sim")
+}
+
+#Disturbing-Sudden-Smooth (values are adjusted due to egarch errors)
+set.seed(000)
+time = 100
+disturbing <- bubble(
+  time,
+  te = time * 0.4,
+  tf = time * 0.6,
+  tr = time * 0.7,
+  beta = 0.5,
+  alpha = 0.6
+)
+sudden <- bubble(
+  time,
+  time * 0.5,
+  tf = time * 0.6,
+  tr = time * 0.66,
+  beta = 0.3,
+  alpha = 0.6,
+  eta = 0.03
+)
+smooth <- bubble(
+  time,
+  time * 0.4,
+  tf = time * 0.6,
+  tr = time * 0.8,
+  beta = 0.9,
+  alpha = 0.6,
+  eta = 0.2
+)
+```
+
+Below is a graphical representation of potential patterns of bubble collapse as reported in Phillips and Shi (2018).
+
+```{r, warning=FALSE}
+autoplot(disturbing)
+autoplot(smooth)
+autoplot(sudden)
+```
+
+The BSADF (Back Sup-ADF) is compared with the Kolmogorov-Smirnov Change Point Detection Model (KS-CPM). The disruptive path is initially examined, followed by 1000 simulations.
+
+```{r, warning=FALSE}
+#Distirubing(40,60,70)
+matrix_empty = matrix(nrow = 100, ncol = 1000)
+set.seed(002)
+cyc = c(1:1000)
+DIS <- data.frame(matrix_empty)
+for (i in cyc) {
+  DIS[, i] <-
+    bubble(
+      time,
+      te = time * 0.4,
+      tf = time * 0.6,
+      tr = time * 0.7,
+      beta = 0.5,
+      alpha = 0.6
+    )
+}
+results_DIS <- list()
+ADF_DIS <- list()
+for (i in cyc) {
+  tryCatch({
+    ss <- diff(log(DIS[, i]))
+    test <-
+      processStream(ss,
+                    "Kolmogorov-Smirnov",
+                    ARL0 = 500,
+                    startup = 20) #startuo 20%, ARL0=500 are default values
+    results_DIS[[i]] <- test$changePoint
+    remove(test)
+    radf_sim <- radf(ts(DIS[, i]))
+    d <- datestamp(radf_sim)
+    ADF_DIS[[i]] <- c(d$series1$Start, d$series1$Peak, d$series1$End)
+    remove(d)
+    remove(radf_sim)
+    print(i)
+  }, error = function(e) {
+    cat('ERROR:', conditionMessage(e), '\n')
+  })
+}
+results_DIS
+ADF_DIS
+correct <- length(results_DIS[lengths(results_DIS) == 3])
+correct_ADF <- length(ADF_DIS[lengths(ADF_DIS) == 3])
+```
+
+Below, the simulation results are summarized, taking into account both the frequency of correct bubble identifications and the Root Mean Square Error (RMSE).
+
+```{r, warning=FALSE}
+#Correctness KS-CPM
+matrix_test = matrix(ncol = 3, nrow = correct)
+matrix_ADF = matrix(ncol = 3, nrow = correct_ADF)
+for (i in 1:correct) {
+  matrix_test[i, ] <-
+    c(results_DIS[lengths(results_DIS) == 3][[i]][1], results_DIS[lengths(results_DIS) == 3] [[i]][2], results_DIS[lengths(results_DIS) == 3][[i]][3])
+}
+dim(matrix_test)[1]
+#Correctness BSADF test
+for (i in 1:correct_ADF) {
+  matrix_ADF[i, ] <-
+    c(as.numeric(substr(ADF_DIS[lengths(ADF_DIS) == 3][[i]][1], 1, 2)),
+      as.numeric(substr(ADF_DIS[lengths(ADF_DIS) == 3][[i]][2], 1, 2)),
+      as.numeric(substr(ADF_DIS[lengths(ADF_DIS) == 3][[i]][3], 1, 2)))
+}
+dim(matrix_ADF)[1]
+#RMSE KS-CPM
+Metrics::rmse(c(matrix_test[, 1], matrix_test[, 2], matrix_test[, 3]),
+              c(rep(40, correct), rep(60, correct), rep(70, correct)))
+#RMSE BSADF test
+Metrics::rmse(c(matrix_ADF[, 1], matrix_ADF[, 2], matrix_ADF[, 3]), c(
+  rep(40, correct_ADF),
+  rep(60, correct_ADF),
+  rep(70, correct_ADF)
+))
+#914
+#843
+```
+
+The same analysis is conducted for the abrupt path.
+
+```{r, warning=FALSE}
+#Sudden(50,60,66)
+matrix_empty = matrix(nrow = 100, ncol = 1000)
+set.seed(003)
+SUD <- data.frame(matrix_empty)
+for (i in cyc) {
+  SUD[, i] <-
+    bubble(
+      time,
+      time * 0.5,
+      tf = time * 0.6,
+      tr = time * 0.66,
+      beta = 0.3,
+      alpha = 0.6,
+      eta = 0.03
+    )
+}
+results_SUD <- list()
+ADF_SUD <- list()
+for (i in cyc) {
+  tryCatch({
+    ss <- diff(log(SUD[, i]))
+    test <-
+      processStream(ss,
+                    "Kolmogorov-Smirnov",
+                    ARL0 = 500,
+                    startup = 20) #startuo 20%, ARL0=500 are default values
+    results_SUD[[i]] <- test$changePoints
+    remove(test)
+    radf_sim <- radf(ts(SUD[, i]))
+    d <- datestamp(radf_sim)
+    ADF_SUD[[i]] <- c(d$series1$Start, d$series1$Peak, d$series1$End)
+    remove(d)
+    remove(radf_sim)
+    print(i)
+  }, error = function(e) {
+    cat('ERROR:', conditionMessage(e), '\n')
+  })
+}
+results_SUD
+correct <- length(results_SUD[lengths(results_SUD) == 3])
+correct_ADF <- length(ADF_SUD[lengths(ADF_SUD) == 3])
+ADF_SUD
+```
+
+```{r, warning=FALSE}
+#Correctness KS-CPM
+matrix_test = matrix(ncol = 3, nrow = correct)
+matrix_ADF = matrix(ncol = 3, nrow = correct_ADF)
+for (i in 1:correct) {
+  matrix_test[i, ] <-
+    c(results_SUD[lengths(results_SUD) == 3][[i]][1], results_SUD[lengths(results_SUD) == 3] [[i]][2], results_SUD[lengths(results_SUD) == 3] [[i]][3])
+}
+dim(matrix_test)[1]
+#Correctness BSADF test
+for (i in 1:correct_ADF) {
+  matrix_ADF[i, ] <-
+    c(as.numeric(substr(ADF_SUD[lengths(ADF_SUD) == 3][[i]][1], 1, 2)),
+      as.numeric(substr(ADF_SUD[lengths(ADF_SUD) == 3][[i]][2], 1, 2)),
+      as.numeric(substr(ADF_SUD[lengths(ADF_SUD) == 3][[i]][3], 1, 2)))
+}
+dim(matrix_ADF)[1]
+#RMSE KS-CPM
+Metrics::rmse(c(matrix_test[, 1], matrix_test[, 2], matrix_test[, 3]),
+              c(rep(50, correct), rep(60, correct), rep(66, correct)))
+#RMSE BSADF test
+Metrics::rmse(c(matrix_ADF[, 1], matrix_ADF[, 2], matrix_ADF[, 3]), c(
+  rep(50, correct_ADF),
+  rep(60, correct_ADF),
+  rep(66, correct_ADF)
+))
+#844
+#543
+```
+
+Finally, the analysis is extended to include the smoothing path as well.
+
+```{r, warning=FALSE}
+#Smooth(40,60,80)
+matrix_empty = matrix(nrow = 100, ncol = 1000)
+set.seed(004)
+SMO <- data.frame(matrix_empty)
+for (i in cyc) {
+  SMO[, i] <-
+    bubble(
+      time,
+      time * 0.4,
+      tf = time * 0.6,
+      tr = time * 0.8,
+      beta = 0.9,
+      alpha = 0.6,
+      eta = 0.2
+    )
+}
+results_SMO <- list()
+ADF_SMO <- list()
+for (i in cyc) {
+  tryCatch({
+    ss <- diff(log(SMO[, i]))
+    test <-
+      processStream(ss,
+                    "Kolmogorov-Smirnov",
+                    ARL0 = 500,
+                    startup = 20) #startuo 20%, ARL0=500 are default values
+    results_SMO[[i]] <- test$changePoints
+    remove(test)
+    radf_sim <- radf(ts(SMO[, i]))
+    d <- datestamp(radf_sim)
+    ADF_SMO[[i]] <- c(d$series1$Start, d$series1$Peak, d$series1$End)
+    remove(d)
+    remove(radf_sim)
+    print(i)
+  }, error = function(e) {
+    cat('ERROR:', conditionMessage(e), '\n')
+  })
+}
+results_SMO
+correct <- length(results_SMO[lengths(results_SMO) == 3])
+correct_ADF <- length(ADF_SMO[lengths(ADF_SMO) == 3])
+ADF_SMO
+```
+
+```{r, warning=FALSE}
+#Correctness KS-CPM
+matrix_test = matrix(ncol = 3, nrow = correct)
+matrix_ADF = matrix(ncol = 3, nrow = correct_ADF)
+for (i in 1:correct) {
+  matrix_test[i, ] <-
+    c(results_SMO[lengths(results_SMO) == 3][[i]][1], results_SMO[lengths(results_SMO) == 3] [[i]][2], results_SMO[lengths(results_SMO) == 3] [[i]][3])
+}
+dim(matrix_test)[1]
+#Correctness BSADF test
+for (i in 1:correct_ADF) {
+  matrix_ADF[i, ] <-
+    c(as.numeric(substr(ADF_SMO[lengths(ADF_SMO) == 3][[i]][1], 1, 2)),
+      as.numeric(substr(ADF_SMO[lengths(ADF_SMO) == 3][[i]][2], 1, 2)),
+      as.numeric(substr(ADF_SMO[lengths(ADF_SMO) == 3][[i]][3], 1, 2)))
+}
+dim(matrix_ADF)[1]
+#RMSE KS-CPM
+Metrics::rmse(c(matrix_test[, 1], matrix_test[, 2], matrix_test[, 3]),
+              c(rep(40, correct), rep(60, correct), rep(80, correct)))
+#RMSE BSADF test
+Metrics::rmse(c(matrix_ADF[, 1], matrix_ADF[, 2], matrix_ADF[, 3]), c(
+  rep(40, correct_ADF),
+  rep(60, correct_ADF),
+  rep(80, correct_ADF)
+))
+#894
+#816
+```
+
+The simulation study indicates evidence of the change point detection model outperforming the BSADF test. Attention can now be shifted to real data analysis.
+
+# Empirical analysis, detection phase
+
+For the empirical analysis, the Renixx index is chosen to transition to the real data example.
+
+```{r, warning=FALSE}
+#Updating of the data.
+renixx <- read.csv("Economic variables/Renixx.csv")
+#Descriptive statistics
+renixx$date <- ymd(renixx$date)
+renixx <- renixx[order(renixx$date), ]
+rownames(renixx) <- NULL
+renixx <- renixx[256:dim(renixx)[1], ] #2005/01/01
+ggplot(renixx, aes(date, close)) + geom_line() + ggtitle('Renixx index') +
+  xlab('Time') + ylab('Absolute Returns')
+#Log-returns
+renixx$date <- ymd(renixx$date)
+df <- renixx %>% dplyr::select(1, 3)
+rownames(df) <- NULL
+df$abs <- abs(c(0, diff(log(df$close))))
+#Absolute log-returns
+df$rate <- c(0, diff(log(df$close)))
+ggplot(df, aes(date, abs)) + geom_line()
+```
+
+The empirical analysis is conducted at the monthly frequency.
+
+```{r, warning=FALSE}
+Month <- as.Date(cut(df$date, "month"))
+renixx_m <- aggregate(close ~ Month, df, mean)
+#Log-returns
+renixx_m$Renixx <- c(0, diff(log(renixx_m$close)))
+#Absolute log-returns
+renixx_m$abs <- c(0, abs(diff(log(renixx_m$close))))
+#Standardized values
+renixx_m$St <- log(renixx_m$close)
+ggplot(renixx_m, aes(Month, abs)) + geom_line() + xlab('Time') + ylab('Absolute Returns') +
+  ggtitle('Renixx index')
+ggplot(renixx_m, aes(Month, close)) + geom_line() + xlab('Time') + ylab('Value') +
+  ggtitle('Renixx index')
+```
+
+```{r, warning=FALSE}
+#KS-CPM
+test <-
+  processStream(
+    ts(renixx_m$Renixx, freq = 12, start = decimal_date(ymd("2005-1-1"))),
+    "Kolmogorov-Smirnov",
+    ARL0 = 500,
+    startup = 20
+  ) #20 initial sample and ARL0=500 are default values.
+breack <- renixx_m$Month[test$changePoints]
+plot(
+  renixx_m$Month,
+  renixx_m$close,
+  type = "l",
+  xlab = "Observation",
+  ylab = "",
+  bty = "l",
+  main = 'Renixx'
+)
+abline(v = breack, lty = 2, col = 'red')
+test
+```
+
+The previous results are compared with those obtained from the BSADF test.
+
+```{r, warning=FALSE}
+set.seed(123)
+series <- ts(renixx_m[, c(2, 4)], frequency = 12, start = c(2005, 1))
+results <- radf(series[, 1])
+autoplot(results) + labs(title = "RENIXX, BSADF")
+d_adf <- datestamp(results)
+d_adf
+```
+
+There is clear evidence that the BSADF is particularly effective in detecting explosive behaviors, a specific aspect of bubble dynamics. This highlights the need for a more comprehensive tool that encompasses the entire life cycle of a bubble, including its initiation, burst, and conclusion phases.
+
+# Empirical analysis, Propagation phase
+
+To analyze the green bubbles, various variables will be taken into account. Two main groups stand out: economic/financial variables and Google Trends data.
+
+```{r, warning=FALSE}
+#Oil WTI Futures
+Oil <-
+  read.csv("Economic variables/Oil_WTI.csv")
+Oil$Date <- mdy(Oil$Date)
+Month <- as.Date(cut(Oil$Date, "month"))
+Oil_m <- aggregate(Price ~ Month, Oil, mean)
+#Transformation
+Oil_m$Rate_O <- c(0, diff(log(Oil_m$Price)))
+Oil_m$Rate_s <- scale(c(0, diff(Oil_m$Price)), scale = TRUE, center = TRUE)
+rownames(Oil_m) <- NULL
+ggplot(Oil_m, aes(Month, Price)) + geom_line() + ggtitle('Oil price')
+```
+
+```{r, warning=FALSE}
+#Geopolitical index
+data_gpr_export <-
+  read_excel("Economic variables/GPI.xls")
+geo_i <- data_gpr_export %>% dplyr::select(6, 3)
+colnames(geo_i)[1] <- "Date"
+geo_i2 <-
+  geo_i[geo_i$Date <= "2022-12-30" &
+          geo_i$Date >= "2005-01-01", ] #2005/01/01
+Month <- as.Date(cut(geo_i2$Date, "month"))
+geo_m <- aggregate(geo_i2$GPRD ~ Month, geo_i2, mean)
+colnames(geo_m)[2] <- "GPRH"
+geo_m$GPRH <- as.numeric(geo_m$GPRH)
+#Transformations
+geo_m$Rate_g <- c(0, diff(log(geo_m$GPRH)))
+geo_m$St <- scale(c(0, diff(geo_m$GPRH)), scale = TRUE, center = TRUE)
+ggplot(geo_m, aes(Month, GPRH)) + geom_line() + ggtitle('Geopolitical index')
+```
+
+```{r, warning=FALSE}
+#MSCI_WORLD
+MSCI <- read_csv("Economic variables/MSCI World.csv")
+MSCI_2 <- MSCI %>% dplyr::select(6, 2)
+MSCI_2$Date <-
+  format(as.Date(MSCI_2$Date, format = '%m/%d/%y'), "%m/%d/%Y")
+MSCI_2$Date <- mdy(MSCI_2$Date)
+Month <- as.Date(cut(MSCI_2$Date, "month"))
+MSCI_2$Close <- as.numeric(MSCI_2$Close)
+MSCI_m <- aggregate(Close ~ Month, MSCI_2, mean)
+colnames(MSCI_m)[2] <- "Price"
+MSCI_m$Price <- as.numeric(MSCI_m$Price)
+#Transformations
+MSCI_m$Rate_ms <- c(0, diff(log(MSCI_m$Price)))
+MSCI_m$Rate_s <-
+  scale(c(0, diff(MSCI_m$Price)), scale = TRUE, center = TRUE)
+ggplot(MSCI_m, aes(Month, Price)) + geom_line() + ggtitle('Global MSCI index')
+```
+
+The below chunk illustrates the two bubbles detected by the KS-CPM in the renewable energy market. Additionally, the correlation among these three series will be demonstrated by outlining the oil and MSCI ratio.
+
+```{r, warning=FALSE}
+#Ratio
+renixx_m$Oil_ratio <- renixx_m$close / Oil_m$Price
+renixx_m$MSCI_ratio <- renixx_m$close / MSCI_m$Price
+#Final plot for green bubble detection
+renixx_m$Date <- as.POSIXct(renixx_m$Month, format = "%Y-%m-%d")
+df_rect <-
+  data.frame(
+    xmin = c(as.POSIXct(d_adf$series1$Start)),
+    xmax = c(as.POSIXct(d_adf$series1$End)),
+    ymin = 0,
+    ymax = Inf,
+    Explosive = c("BSADF")
+  )
+g <- ggplot(renixx_m, aes(x = Date, y = (close / 30))) +
+  geom_line(aes(color = "RENIXX")) +
+  geom_line(aes(y = MSCI_ratio * 10, color = "Oil ratio"), linetype = "twodash") +
+  geom_line(aes(y = Oil_ratio / 2, color = "MSCI ratio"), linetype = "twodash") +
+  theme_light() + ylab('Value') + xlab('Time') + ggtitle('Empirical Analysis') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  geom_segment(
+    aes(
+      x = renixx_m$Date[36],
+      y = 0,
+      xend = renixx_m$Date[36],
+      yend = renixx_m$close[36] / 30
+    ),
+    linetype = "dashed",
+    color = "red"
+  ) +
+  annotate("text",
+           x = renixx_m$Date[36],
+           y = renixx_m$close[36] / 30 + 5,
+           label = "Bubble Burst") +
+  geom_segment(
+    aes(
+      x = renixx_m$Date[95],
+      y = 0,
+      xend = renixx_m$Date[95],
+      yend = renixx_m$close[95] / 30
+    ),
+    linetype = "dashed",
+    color = "red"
+  ) +
+  annotate("text",
+           x = renixx_m$Date[95],
+           y = renixx_m$close[95] / 30 + 5,
+           label = "Bubble End") +
+  geom_segment(
+    aes(
+      x = renixx_m$Date[124],
+      y = 0,
+      xend = renixx_m$Date[124],
+      yend = renixx_m$close[124] / 30
+    ),
+    linetype = "dashed",
+    color = "red"
+  ) +
+  annotate("text",
+           x = renixx_m$Date[125],
+           y = renixx_m$close[124] / 30 + 5,
+           label = "Restore") +
+  geom_segment(
+    aes(
+      x = renixx_m$Date[178],
+      y = 0,
+      xend = renixx_m$Date[178],
+      yend = renixx_m$close[178] / 30
+    ),
+    linetype = "dashed",
+    color = "red"
+  ) +
+  annotate("text",
+           x = renixx_m$Date[170],
+           y = renixx_m$close[178] / 30 + 5,
+           label = "Bubble Start") +
+  geom_rect(
+    data = df_rect,
+    aes(
+      xmin = xmin,
+      ymin = ymin,
+      xmax = xmax,
+      ymax = ymax,
+      fill = Explosive
+    ),
+    alpha = 0.2,
+    inherit.aes = FALSE
+  ) +
+  scale_fill_manual(name = 'Test', values = c("azure4")) +
+  geom_point(
+    data = renixx_m[c(36, 95, 124, 178), ],
+    aes(x = Date, y = (close / 30)),
+    colour = "red",
+    size = 2
+  ) +
+  scale_color_manual(
+    name = 'Time Series',
+    breaks = c('RENIXX', 'Oil ratio', 'MSCI ratio'),
+    values = c(
+      'RENIXX' = 'darkgreen',
+      'Oil ratio' = 'darkred',
+      'MSCI ratio' = 'steelblue'
+    )
+  ) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    plot.title = element_text(hjust = 0)
+  )
+grid.arrange(g)
+```
+
+Below, the FSI as well as the EPU index are outlined.
+
+```{r, warning=FALSE}
+#EPU
+GEPUCURRENT <- read.csv("Economic variables/GEPUCURRENT.csv")
+GEPUCURRENT$DATE <- ymd(GEPUCURRENT$DATE)
+GEPUCURRENT <- GEPUCURRENT[97:312, ] #2005/01/01-2022/12/01
+rownames(GEPUCURRENT) <- NULL
+#Transformation
+GEPUCURRENT$Rate <- c(0, diff(log(GEPUCURRENT$GEPUCURRENT)))
+GEPUCURRENT$Rate_s <-
+  scale(c(0, diff(GEPUCURRENT$GEPUCURRENT)), scale = TRUE, center = TRUE)
+#OFR
+Fs <- read.csv("Economic variables/FSI.csv")
+Month <- as.Date(cut(ymd(Fs$Date), "month"))
+Fs_m <- aggregate(OFR.FSI ~ Month, Fs, mean)
+Fs_m <- Fs_m[61:276, ] #2005/01/01-2022/12/01
+#Transformation
+Fs_m$Rate <- c(0, diff(Fs_m$OFR.FSI))
+Fs_m$Rate_s <-
+  scale(c(0, diff(Fs_m$OFR.FSI)), scale = TRUE, center = TRUE) #(presence of 0s, no log transformation)
+ggplot(Fs_m, aes(Month, OFR.FSI)) + geom_line() + ggtitle('Financial Stability')
+ggplot(GEPUCURRENT, aes(DATE, GEPUCURRENT)) + geom_line() + ggtitle('Policy Uncertainty')
+```
+
+Finally, both economic and financial variables are grouped into a single dataset.
+
+```{r, warning=FALSE}
+#Financial/economic variables
+Finance <- renixx_m[, c(1, 3)]
+colnames(Finance)[2] <- "Renixx"
+Finance$Oil_p <- Oil_m$Rate_O
+Finance$MSCI <- MSCI_m$Rate_ms
+Finance$EPU <- GEPUCURRENT$Rate
+Finance$OFR <- Fs_m$Rate
+Finance$Geo_i <- geo_m$Rate_g
+#Financial dataset
+Finance_2 <- renixx_m[, c(1, 2)]
+colnames(Finance_2)[2] <- "Renixx"
+Finance_2$Renixx <- scale(Finance_2$Renixx, center = TRUE, scale = TRUE)
+Finance_2$Oil_p <- scale(Oil_m$Price, center = TRUE, scale = TRUE)
+Finance_2$Geo_i <- scale(geo_m$GPRH, center = TRUE, scale = TRUE)
+Finance_2$MSCI <- scale(MSCI_m$Price, center = TRUE, scale = TRUE)
+Finance_2$EPU <- scale(GEPUCURRENT$GEPUCURRENT, center = TRUE, scale = TRUE)
+Finance_2$OFR <- scale(Fs_m$OFR.FSI, center = TRUE, scale = TRUE)
+#Plot
+ggplot() +
+  geom_line(data = Finance_2, aes(x = Month, y = Renixx, color = "Rennix")) +
+  geom_line(data = Finance_2, aes(x = Month, y = MSCI, color = "Global MSCI")) +
+  geom_line(data = Finance_2, aes(x = Month, y = Geo_i, color = "Geopolitical index")) +
+  geom_line(data = Finance_2, aes(x = Month, y = Oil_p, color = "Oil price")) +
+  geom_line(data = Finance_2, aes(x = Month, y = EPU, color = "EPU")) +
+  geom_line(data = Finance_2, aes(x = Month, y = OFR, color = "OFR")) +
+  xlab('data_date') + ggtitle('Financial time series') +
+  ylab('Monthly series') + scale_color_manual(
+    name = 'Series',
+    breaks = c(
+      'Rennix',
+      'Global MSCI',
+      'Geopolitical index',
+      'Oil price',
+      'EPU',
+      'OFR'
+    ),
+    values = c(
+      'Rennix' = 'green',
+      'Global MSCI' = 'red',
+      'Geopolitical index' = 'blue',
+      'Oil price' = 'brown',
+      'EPU' = 'orange',
+      'OFR' = 'grey'
+    )
+  )
+```
+
+Similarly, the analysis extends to the text variables utilized in the study.
+
+```{r, warning=FALSE}
+#Green Energy
+green_e <-
+  read.csv("Google Trends/Green_energy.csv",
+           header = TRUE,
+           comment.char = "#")[13:228, ] #2005/01/01-2022/12/01
+green_e$Time <- ymd(green_e$Time)
+green_e$Rate <- c(0, diff(log(green_e$Absolute.Google.Search.Volume)))
+Climate <- as.data.frame(green_e[, 1])
+colnames(Climate)[1] <- "Date"
+Climate$Green_e <- green_e[, 4]
+#New technology
+Tech_d <-
+  read.csv("Google Trends/New_Technology.csv",
+           header = TRUE,
+           comment.char = "#")[13:228, ] #2005/01/01-2022/12/01
+Tech_d$Rate <- c(0, diff(log(Tech_d$Absolute.Google.Search.Volume)))
+Climate$Tech <- Tech_d[, 4]
+#Energy index
+Energy_i <-
+  read.csv("Google Trends/Energy_index.csv",
+           header = TRUE,
+           comment.char = "#")[13:228, ] #2005/01/01-2022/12/01
+Energy_i <- Energy_i[, c(1, 2, 3)]
+Energy_i$Rate <-
+  c(0, diff(log(Energy_i$Absolute.Google.Search.Volume)))
+Climate$Energy_i <- Energy_i[, 4]
+#Global warming
+global_w <-
+  read.csv("Google Trends/Global_warming.csv",
+           header = TRUE,
+           comment.char = "#")[13:228, ] #2005/01/01-2022/12/01
+global_w$Rate <-
+  c(0, diff(log(global_w$Absolute.Google.Search.Volume)))
+Climate$Warming <- global_w[, 4]
+#Natural disaster
+Natural <-
+  read.csv("Google Trends/Natural_disasters.csv",
+           header = TRUE,
+           comment.char = "#")[13:228, ] #2005/01/01-2022/12/01
+Natural$Rate <- c(0, diff(log(Natural$Absolute.Google.Search.Volume)))
+Climate$Natural <- Natural[, 4]
+#Carbon price
+Carbon_p <-
+  read.csv("Google Trends/Carbon_price.csv",
+           header = TRUE,
+           comment.char = "#")[13:228, ] #2005/01/01-2022/12/01
+Carbon_p$Rate <-
+  c(0, diff(log(Carbon_p$Absolute.Google.Search.Volume)))
+Climate$Carbon_p <- Carbon_p[, 4]
+#Carbon tax
+Tax <-
+  read.csv("Google Trends/Carbon_tax.csv",
+           header = TRUE,
+           comment.char = "#")[13:228, ] #2005/01/01-2022/12/01
+Tax$Rate <- c(0, diff(log(Tax$Absolute.Google.Search.Volume)))
+Climate$Tax <- Tax[, 4]
+#Energy shares
+Energy_s <-
+  read.csv("Google Trends/Energy_shares.csv",
+           header = TRUE,
+           comment.char = "#")[13:228, ] #2005/01/01-2022/12/01
+Energy_s$Rate <-
+  c(0, diff(log(Energy_s$Absolute.Google.Search.Volume)))
+Climate$Energy_s <- Energy_s[, 4]
+#Text dataset
+Climate_2 <- as.data.frame(green_e[, 1])
+colnames(Climate_2)[1] <- "Date"
+#Scaling
+Climate_2$Green_e <-
+  scale(as.numeric(green_e[, 3]), center = TRUE, scale = TRUE)
+Climate_2$Tech <-
+  scale(as.numeric(Tech_d[, 3]), center = TRUE, scale = TRUE)
+Climate_2$Warming <-
+  scale(as.numeric(global_w[, 3]), center = TRUE, scale = TRUE)
+Climate_2$Energy_i <-
+  scale(as.numeric(Energy_i[, 3]), center = TRUE, scale = TRUE)
+Climate_2$Natural <-
+  scale(as.numeric(Natural[, 3]), center = TRUE, scale = TRUE)
+Climate_2$Carbon_p <-
+  scale(as.numeric(Carbon_p[, 3]), center = TRUE, scale = TRUE)
+Climate_2$Energy_s <-
+  scale(as.numeric(Energy_s[, 3]), center = TRUE, scale = TRUE)
+Climate_2$Energy_T <-
+  scale(as.numeric(Energy_s[, 3] + Energy_i[, 3]) / 2,
+        center = TRUE,
+        scale = TRUE)
+Climate_2$Energy_s <-
+  scale(as.numeric(Energy_s[, 3]), center = TRUE, scale = TRUE)
+Climate_2$Tax <- scale(as.numeric(Tax[, 3]), center = TRUE, scale = TRUE)
+#Plot
+ggplot() +
+  geom_line(data = Climate_2, aes(x = Date, y = Green_e, color = "Green Energy")) +
+  geom_line(data = Climate_2, aes(x = Date, y = Energy_i, color = "Energy Index")) +
+  geom_line(data = Climate_2, aes(x = Date, y = Warming, color = "Global Warming")) +
+  geom_line(data = Climate_2, aes(x = Date, y = Natural, color = "Natural Disasters")) +
+  geom_line(data = Climate_2, aes(x = Date, y = Carbon_p, color = "Carbon price")) +
+  geom_line(data = Climate_2, aes(x = Date, y = Energy_s, color = "Energy shares")) +
+  geom_line(data = Climate_2, aes(x = Date, y = Tax, color = "Carbon Tax")) +
+  geom_line(data = Climate_2, aes(x = Date, y = Tech, color = "New Technology")) +
+  xlab('data_date') + ggtitle('Text-time series') +
+  ylab('Monthly series') + scale_color_manual(
+    name = 'Series',
+    breaks = c(
+      'Green Energy',
+      'Global Warming',
+      'Natural Disasters',
+      'Carbon price',
+      "New Technology",
+      'Energy Index',
+      'Green Bond',
+      'Carbon Emissions',
+      'Energy shares',
+      'Carbon Tax'
+    ),
+    values = c(
+      'Green Energy' = 'green',
+      'Global Warming' = 'red',
+      'Natural Disasters' = 'gold',
+      'Carbon price' = 'brown',
+      'New Technology' = 'purple',
+      'Energy Index' = 'blue',
+      'Carbon Emissions' = 'orange',
+      'Energy shares' = 'violet',
+      'Carbon Tax' = 'grey'
+    )
+  )
+```
+
+The final dataset is built as below.
+
+```{r, warning=FALSE}
+#Final dataset (log-diff)
+Finance$Merge <- format(as.Date(Finance$Month), "%Y-%m")
+Climate$Merge <- format(as.Date(Climate$Date), "%Y-%m")
+Data <- merge(Finance, Climate, by = "Merge")
+Data <- Data[c(2:216), -c(1, 9)]
+rownames(Data) <- NULL
+```
+
+```{r, warning=FALSE}
+#Final dataset (scaled)
+Climate_2 <-
+  Climate_2[c(
+    'Date',
+    'Green_e',
+    'Tech',
+    'Warming',
+    'Natural',
+    'Carbon_p',
+    'Energy_i',
+    'Energy_s',
+    'Tax'
+  )]
+Finance_2$Merge <- format(as.Date(Finance_2$Month), "%Y-%m")
+Climate_2$Merge <- format(as.Date(Climate_2$Date), "%Y-%m")
+#Origianl dataset
+Data_or <- merge(Finance_2, Climate_2, by = "Merge")
+Data_or <- Data_or[, -c(1, 9)]
+rownames(Data_or) <- NULL
+```
+
+Before proceeding, both the Augmented Dickey-Fuller (ADF) test and the Kwiatkowski-Phillips-Schmidt-Shin (KPSS) test are conducted to detect the presence of a unit root.
+
+```{r, warning=FALSE}
+#ADF for text data
+summary(ur.df(
+  Climate[, "Carbon_p"], #lag=12 for seasonality
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Climate[, "Green_e"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Climate[, "Tech"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Climate[, "Warming"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Climate[, "Natural"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Climate[3:216, "Tax"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Climate[, "Energy_s"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Climate[, "Energy_i"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+#ADF for economic data
+summary(ur.df(
+  Finance[, "Oil_p"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Finance[, "Renixx"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Finance[3:216, "MSCI"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Finance[, "EPU"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Finance[3:216, "OFR"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+summary(ur.df(
+  Finance[, "Geo_i"],
+  type = "drift",
+  lags = 12,
+  selectlags = "AIC"
+))
+#KPSS for text data
+kpss.test(Climate[, "Carbon_p"])
+kpss.test(Climate[, "Tech"])
+kpss.test(Climate[, "Natural"])
+kpss.test(Climate[, "Green_e"])
+kpss.test(Climate[, "Warming"])
+kpss.test(Climate[, "Energy_s"])
+kpss.test(Climate[, "Tax"])
+kpss.test(Climate[, "Energy_i"])
+#KPSS for economic data
+kpss.test(Finance[, "Oil_p"])
+kpss.test(Finance[, "Renixx"])
+kpss.test(Finance[, "MSCI"])
+kpss.test(Finance[, "Geo_i"])
+kpss.test(Finance[, "EPU"])
+kpss.test(Finance[, "OFR"])
+#Arch test due to no log-transformation
+archtest(Finance[, "OFR"])
+```
+
+Propagation effects of both Renixx index and oil prices are evaluated using econometric procedures.
+
+```{r, warning=FALSE}
+#VAR (12 time frequency of the series)
+all_series <-
+  ts(
+    Data[, c('Renixx', 'OFR', 'Oil_p')],
+    start = c(2005, 2),
+    end = c(2022, 12),
+    frequency = 12
+  )
+var <-
+  VARselect(all_series,
+            type = "none",
+            lag.max = 12,
+            season = 12)
+var$selection["FPE(n)"]
+var_OFR <- VAR(all_series, 1, season = 12, type = 'none')
+summary(var_OFR)
+```
+
+```{r}
+#Impulse Response Function
+impresp <- irf(var_OFR,
+               impulse = 'Renixx',
+               response = 'OFR',
+               runs = 1000)
+#Negative shock
+impresp$irf$Renixx <- -impresp$irf$Renixx
+impresp$Lower$Renixx <- -impresp$Lower$Renixx
+impresp$Upper$Renixx <- -impresp$Upper$Renixx
+plot(impresp, main = 'Impulse Response Function from RENIXX, Negative Shock', ylab =
+       'FSI')
+```
+```{r}
+#OFR
+grangertest(OFR ~ Oil_p, order = 12, data = Data)#Granger
+grangertest(OFR ~ Renixx, order = 12, data = Data)#Granger
+#Renixx
+grangertest(Renixx ~ OFR, order = 12, data = Data)
+grangertest(Renixx ~ Oil_p, order = 12, data = Data)#Granger
+#Oil price
+grangertest(Oil_p ~ OFR, order = 12, data = Data)#Granger
+grangertest(Oil_p ~ Renixx, order = 12, data = Data)
+```
+
+The results demonstrate a Granger causality between both the oil price and the Renixx index concerning the OFR. However, the VAR model reveals only a positive effect of the Renixx index on the OFR. These findings are significant for policymakers, indicating that green assets could potentially trigger Climate Minsky moments.
+
+# Forecasting Phase
+
+The following chunks are dedicated to analyzing the dynamics of bubbles in the Renixx index. For this analysis, the following new libraries are required.
+
+```{r, warning=FALSE}
+library(bestNormalize)
+library(caret)
+library(Rssa)
+library(lattice)
+library(fANCOVA)
+library(stats)
+library(HoRM)
+library(parameters)
+library(TSA)
+library(fGarch)
+library(fpp)
+library(vars)
+library(BVAR)
+library(Metrics)
+library(aTSA)
+library(tsoutliers)
+library(tsDyn)
+library(goft)
+library(bruceR)
+library(plotmo)
+library(grid)
+library(factoextra)
+library(ggfortify)
+library(tvReg)
+library(forecast)
+```
+
+The plot below illustrates the distribution of text variables based on the three different stages identified by the KS-CPM.
+
+```{r, warning=FALSE}
+#Codification
+breack
+Data_2 <- renixx_m[c(2:216), c('Month', 'close')] #for lagge values
+colnames(Data_2)[2] <- "Renixx"
+#Dummy codification
+Data_2$dummy_Renixx  <- cut(
+  Data_2$Month,
+  breaks = as.Date(c(
+    "2005-01-01", "2012-12-01", "2019-10-01", '2023-01-01'
+  )),
+  labels = c('Clean-Tech', 'No-bubble', 'Climate')
+)
+#Dataset lagge values of text variables only (scaled values)
+Data_2$dummy_Renixx <- relevel(Data_2$dummy_Renixx, ref = 'No-bubble')
+Data_2$Energy_ilag <- lag(Data_or$Energy_i)[2:216]
+Data_2$Warminglag <- lag(Data_or$Warming)[2:216]
+Data_2$Naturallag <- lag(Data_or$Natural)[2:216]
+Data_2$Green_elag <- lag(Data_or$Green_e)[2:216]
+Data_2$Carbon_plag <- lag(Data_or$Carbon_p)[2:216]
+Data_2$Techlag <- lag(Data_or$Tech)[2:216]
+Data_2$Energy_slag <- lag(Data_or$Energy_s)[2:216]
+Data_2$Taxlag <- lag(Data_or$Tax)[2:216]
+Data_2 <- Data_2[, -c(1, 2)]
+rownames(Data_2) <- NULL
+#Info
+str(Data_2)
+```
+
+```{r, warning=FALSE}
+#Density plot for the bubble's stages
+p1 <-
+  ggplot(
+    Data_2,
+    aes(
+      x = Green_elag,
+      group = dummy_Renixx,
+      color = dummy_Renixx,
+      fill = dummy_Renixx
+    )
+  ) + labs(fill = 'Stage') +
+  guides(color = "none") + geom_density(alpha = 0.4) + ggtitle('Green Energy') + ylab('Density') + xlab('Standardized Value') +
+  xlim(c(-2, 4)) + ylim(c(0, 1.5))
+p2 <-
+  ggplot(
+    Data_2,
+    aes(
+      x = Naturallag,
+      group = dummy_Renixx,
+      color = dummy_Renixx,
+      fill = dummy_Renixx
+    )
+  ) + geom_density(alpha = 0.4) +
+  guides(color = "none") + geom_density(alpha = 0.4) + ggtitle('Natural Disasters') + labs(fill =
+                                                                                             'Stage') + ylab('Density') + xlab('Standardized Value') +
+  xlim(c(-2, 4)) + ylim(c(0, 1.5))
+p3 <-
+  ggplot(
+    Data_2,
+    aes(
+      x = Carbon_plag,
+      group = dummy_Renixx,
+      color = dummy_Renixx,
+      fill = dummy_Renixx
+    )
+  ) + geom_density(alpha = 0.4) + ggtitle('Carbon Price') +
+  guides(color = "none") + geom_density(alpha = 0.4) + labs(fill = 'Stage') + xlab('Standardized Value') + ylab('Density') +
+  xlim(c(-2, 4)) + ylim(c(0, 1.5))
+p4 <-
+  ggplot(
+    Data_2,
+    aes(
+      x = Energy_ilag,
+      group = dummy_Renixx,
+      color = dummy_Renixx,
+      fill = dummy_Renixx
+    )
+  ) + geom_density(alpha = 0.4) +
+  guides(color = "none") + geom_density(alpha = 0.4) + xlab('Standardized Value') + ggtitle('Energy Index') + labs(fill =
+                                                                                                                     'Stage') + ylab('Density') +
+  xlim(c(-2, 4)) + ylim(c(0, 1.5))
+p5 <-
+  ggplot(
+    Data_2,
+    aes(
+      x = Warminglag,
+      group = dummy_Renixx,
+      color = dummy_Renixx,
+      fill = dummy_Renixx
+    )
+  ) + geom_density(alpha = 0.4) +
+  guides(color = "none") + geom_density(alpha = 0.4) + xlab('Standardized Value') + ggtitle('Global Warming') + labs(fill =
+                                                                                                                       'Stage') + ylab('Density') +
+  xlim(c(-2, 4)) + ylim(c(0, 2.55))
+p6 <-
+  ggplot(Data_2,
+         aes(
+           x = Techlag,
+           group = dummy_Renixx,
+           color = dummy_Renixx,
+           fill = dummy_Renixx
+         )) + geom_density(alpha = 0.4) +
+  guides(color = "none") + geom_density(alpha = 0.4) + xlab('Standardized Value') +
+  ggtitle('New Technology') + labs(fill =
+                                     'Stage') + ylab('Density') +
+  xlim(c(-2, 4)) + ylim(c(0, 1.5))
+p7 <-
+  ggplot(
+    Data_2,
+    aes(
+      x = Energy_slag,
+      group = dummy_Renixx,
+      color = dummy_Renixx,
+      fill = dummy_Renixx
+    )
+  ) + geom_density(alpha = 0.4) +
+  guides(color = "none") + geom_density(alpha = 0.4) + xlab('Standardized Value') + ggtitle('Energy Shares') + labs(fill =
+                                                                                                                      'Stage') + ylab('Density') +
+  xlim(c(-2, 4)) + ylim(c(0, 1.5))
+p8 <-
+  ggplot(Data_2,
+         aes(
+           x = Taxlag,
+           group = dummy_Renixx,
+           color = dummy_Renixx,
+           fill = dummy_Renixx
+         )) + geom_density(alpha = 0.4) +
+  guides(color = "none") + geom_density(alpha = 0.4) + xlab('Standardized Value') + ggtitle('Carbon Tax') + labs(fill =
+                                                                                                                   'Stage') + ylab('Density') +
+  xlim(c(-2, 4)) + ylim(c(0, 1.5))
+grid.arrange(p1,
+             p2,
+             p3,
+             p4,
+             p5,
+             p6,
+             p7,
+             p8,
+             ncol = 4,
+             top = textGrob("RENIXX Index", gp = gpar(fontsize = 20, font = 3)))
+```
+
+Here, we utilize both the logit model and the elastic net regularization technique to forecast explosive behaviors within the time series. Economic and text variables, with their first lagged values, are used as potential predictors in the analysis.
+
+```{r, warning=FALSE}
+#Dummy codification for explosive behaviours
+Data_2$dummy_Renixx <-
+  as.factor(
+    ifelse(
+      Data$Month >= "2007-07-01" &
+        Data$Month <= "2007-08-01" |
+        Data$Month >= "2007-10-01" &
+        Data$Month <= "2008-01-01" |
+        Data$Month >= "2015-04-01" &
+        Data$Month <= "2015-06-01" |
+        Data$Month >= "2019-12-01" &
+        Data$Month <= "2020-03-01" |
+        Data$Month >= "2020-07-01" &
+        Data$Month <= "2021-05-01" |
+        Data$Month >= "2021-11-01" &
+        Data$Month <= "2021-12-01",
+      'Explosive',
+      'No-Explosive'
+    )
+  )
+#Dataset
+Data_2$dummy_Renixx
+Data_2$dummy_Renixx <-
+  relevel(Data_2$dummy_Renixx, ref = 'No-Explosive')
+#Economic variables
+Data_2$diff_Enii <-
+  lag(scale((renixx_m$close), center = TRUE, scale = TRUE))[2:216]
+Data_2$MSCIlag <- lag(MSCI_m$Price)[2:216]
+Data_2$Oillag <- lag(Oil_m$Price)[2:216]
+Data_2$EPUlag <- lag(GEPUCURRENT$GEPUCURRENT)[2:216]
+#Data_2$OFRlag<-lag(Fs_m$OFR.FSI)[2:216]
+Data_2$GEOlag <- lag(geo_m$GPRH)[2:216]
+#Scaling and diff
+Data_2$Oillag <-
+  scale(c(NA, diff(Data_2$Oillag)), center = TRUE, scale = TRUE)
+Data_2$EPUlag <-
+  scale(c(NA, diff(Data_2$EPUlag)), center = TRUE, scale = TRUE)
+Data_2$MSCIlag <-
+  scale(c(NA, diff(Data_2$MSCIlag)), center = TRUE, scale = TRUE)
+Data_2$GEOlag <-
+  scale(c(NA, diff(Data_2$GEOlag)), center = TRUE, scale = TRUE)
+```
+
+Three different generalized linear model are estimated to provide the most accurate prediction of such a phenomena.
+
+* Logit model with only the RENNIX variable at the previous time (naive model).
+
+* Logit model with lagged variables.
+
+* Elastic net regularization logistic model.
+
+```{r, warning=FALSE}
+#0,1 codification
+Data_2$dummy_Renixx <-
+  as.factor(
+    ifelse(
+      Data$Month >= "2007-07-01" &
+        Data$Month <= "2007-08-01" |
+        Data$Month >= "2007-10-01" &
+        Data$Month <= "2008-01-01" |
+        Data$Month >= "2015-04-01" &
+        Data$Month <= "2015-06-01" |
+        Data$Month >= "2019-12-01" &
+        Data$Month <= "2020-03-01" |
+        Data$Month >= "2020-07-01" &
+        Data$Month <= "2021-05-01" |
+        Data$Month >= "2021-11-01" & Data$Month <= "2021-12-01",
+      1,
+      0
+    )
+  )
+#Train/validation splitting (choosen depending on the distribution of explosive events)
+train.data  <- Data_2[c(2:190), ] #no first observation for NA
+vali.data <- Data_2[c(191:215), ]
+#Dummy code categorical predictor variables
+x <- model.matrix(dummy_Renixx ~ ., train.data)[, -1]
+#Convert the outcome (class) to a numerical variable
+y <- train.data$dummy_Renixx
+```
+
+```{r, warning=FALSE}
+#Elastic net CV
+#### creating sampling seeds ####
+#https://rpubs.com/crossxwill/time-series-cv
+set.seed(123)
+seeds <- vector(mode = "list", length = 57)
+for (i in 1:56)
+  seeds[[i]] <- sample.int(1000, 15)
+seeds[[57]] <- sample.int(1000, 1)
+###
+#Hyperparameters's estiamtion
+tuneLength.num <- 15
+myTimeControl <- trainControl(
+  method = "timeslice",
+  initialWindow = 122,
+  #122 to include the clean tech bubble
+  horizon = 12,
+  #one year of moving window.
+  fixedWindow = FALSE,
+  allowParallel = FALSE,
+  seeds = seeds
+)
+glmnet.mod <- train(
+  dummy_Renixx ~ .,
+  data = train.data,
+  method = "glmnet",
+  family = "binomial",
+  trControl = c(myTimeControl),
+  tuneLength = tuneLength.num
+)
+glmnet.mod
+```
+
+```{r, warning=FALSE}
+#Fit the final model on the training data
+model <-
+  glmnet(
+    x,
+    y,
+    alpha = glmnet.mod$bestTune$alpha,
+    family = "binomial",
+    lambda = glmnet.mod$bestTune$lambda
+  )
+model_plot <-
+  glmnet(x, y, alpha = glmnet.mod$bestTune$alpha, family = "binomial")
+#Display regression coefficients
+coef(model)
+#Make predictions on the test data
+x.test <- model.matrix(dummy_Renixx ~ ., vali.data)[, -1]
+probabilities <- model %>% predict(newx = x.test)
+predicted.classes <- ifelse(probabilities > 0.5, 1, 0)
+#Model accuracy
+observed.classes <- vali.data$dummy_Renixx
+mean(predicted.classes == observed.classes)
+confusionMatrix(as.factor(predicted.classes[, 1]), observed.classes)
+#Plot of the coefficients
+plot(model_plot, xvar = "lambda", label = T)
+lbs_fun <- function(fit, offset_x = 1, ...) {
+  L <- length(fit$lambda)
+  x <- log(fit$lambda[L]) + offset_x
+  y <- fit$beta[, L]
+  labs <- names(y)
+  text(x, y, labels = labs, ...)
+}
+```
+
+```{r, warning=FALSE}
+#Logit model with variables
+model_f <-
+  glm(dummy_Renixx ~ .,
+      family = binomial(link = "logit"),
+      data = train.data)
+model_0 <-
+  glm(dummy_Renixx ~ 1,
+      family = binomial(link = "logit"),
+      data = train.data)
+model_2 <-
+  glm(
+    dummy_Renixx ~ MSCIlag + diff_Enii + Energy_ilag + Techlag,
+    family = binomial(link = "logit"),
+    data = train.data
+  )
+summary(model_2)
+model_2$deviance
+- 2 * logLik(model_2)
+#Check
+vif(model_2) #>10 multicollinearity
+lrtest(model_0, model_2) #reject null hypothesis -> complex model
+lrtest(model_2, model_f) #accept null hypothesis -> nested model
+blr_linktest(model_2) #misspecification -> no
+#R^2
+list(model = pscl::pR2(model_2)["McFadden"])
+#Plot
+model1_data <- augment(model_2) %>% mutate(index = 1:n())
+ggplot(model1_data, aes(index, .std.resid, color = dummy_Renixx)) +
+  geom_point(alpha = .5) +
+  geom_ref_line(h = 3)
+#Odds ratio with 0.1
+or_glm(
+  data = train.data,
+  model = model_2,
+  incr = c(
+    Naturallag = 0.1,
+    Green_elag = 0.1,
+    Energy_ilag = 0.1,
+    Techlag = 0.1,
+    Carbon_plag = 0.1,
+    Warminglag = 0.1,
+    Energy_slag = 0.1,
+    Taxlag = 0.1,
+    MSCIlag = 0.1,
+    diff_Enii = 0.1,
+    Time = 0.1,
+    OFRlag = 0.1
+  )
+)
+```
+
+```{r, warning=FALSE}
+#Validation set
+predictions <-
+  predict(model_2, type = "response", newdata = vali.data)
+predictions
+threshold <- 0.5
+binary_predictions <- ifelse(predictions > threshold, 1, 0)
+confusionMatrix(as.factor(binary_predictions), observed.classes)
+```
+
+```{r}
+#Logit model with only the RENIXX index.
+model_3 <-
+  glm(dummy_Renixx ~ diff_Enii,
+      family = binomial(link = "logit"),
+      data = train.data)
+summary(model_3)
+#Validation set
+predictions <-
+  predict(model_3, type = "response", newdata = vali.data)
+predictions
+threshold <- 0.5
+binary_predictions <- ifelse(predictions > threshold, 1, 0)
+confusionMatrix(as.factor(binary_predictions), observed.classes)
+```
+
+As indicated by the above results, the elastic net regularization model demonstrates superior forecasting performance compared to other models.
+
+Because of the escalating utilization of Google throughout the years, the chosen time frame extends from 2015 to 2022. This decision aims to capture a heightened correlation between text variables and the Renixx index, as depicted in the above plot. In the one-step ahead exercise, four models are taken into account.
+
+*ARIMA
+
+*ARIMAX
+
+*VECM
+
+*BSTS
+
+```{r, warning=FALSE}
+#Google trends
+Green_energy_pred <-
+  read.csv("Google Trends/Green_energy.csv",
+           header = TRUE,
+           comment.char = "#")
+Carbon_tax_pred <-
+  read.csv("Google Trends/Carbon_tax.csv",
+           header = TRUE,
+           comment.char = "#")
+Carbon_price_pred <-
+  read.csv("Google Trends/Carbon_price.csv",
+           header = TRUE,
+           comment.char = "#")
+Natural_disaster_pred <-
+  read.csv("Google Trends/Natural_disasters.csv",
+           header = TRUE,
+           comment.char = "#")
+Global_warming_pred <-
+  read.csv("Google Trends/Global_warming.csv",
+           header = TRUE,
+           comment.char = "#")
+New_tech_pred <-
+  read.csv("Google Trends/New_Technology.csv",
+           header = TRUE,
+           comment.char = "#")
+Energy_spred <-
+  read.csv("Google Trends/Energy_shares.csv",
+           header = TRUE,
+           comment.char = "#")
+Energy_ipred <-
+  read.csv("Google Trends/Energy_index.csv",
+           header = TRUE,
+           comment.char = "#")
+#Oil price
+Oil_pred <-
+  read.csv("Data forecasting/Oil_pred.csv",
+           header = TRUE,
+           comment.char = "#")
+Oil_pred$Date <- dmy(Oil_pred$Date)
+Month <- as.Date(cut(Oil_pred$Date, "month"))
+Oil_predm <- aggregate(Price ~ Month, Oil_pred, mean)
+Oil_predm <- Oil_predm[217:228, ] #2005/01/01 2023/12/01
+Oil_predm <- rbind(Oil_m[, 1:2], Oil_predm)
+#MSCI
+MSCI_pred <-
+  read.csv("Data forecasting/MSCI World_pred.csv",
+           header = TRUE,
+           comment.char = "#")
+MSCI_pred$Date <- dmy(MSCI_pred$Date)
+MSCI_pred$Price <- as.numeric(gsub(",", "", MSCI_pred$Price))
+Month <- as.Date(cut(MSCI_pred$Date, "month"))
+MSCI_predm <- aggregate(Price ~ Month, MSCI_pred, mean)
+MSCI_predm <- MSCI_predm[127:138, ] #2005/01/01 2023/12/01
+MSCI_predm <- rbind(MSCI_m[, 1:2], MSCI_predm)
+#GEPUCURRENT
+GEPUCURRENT_pred <-
+  read.csv(
+    "Data forecasting/GEPUCURRENT_pred.csv",
+    header = TRUE,
+    comment.char = "#"
+  )
+GEPUCURRENT_pred$DATE <- ymd(GEPUCURRENT_pred$DATE)
+GEPUCURRENT_pred <- GEPUCURRENT_pred[217:228, ]
+GEPUCURRENT_pred <- rbind(GEPUCURRENT[, 1:2], GEPUCURRENT_pred)
+#Geopolitical index
+data_gpr_pred <- read_excel("Data forecasting/GPI_pred.xls")
+geo_pred <- data_gpr_pred %>% dplyr::select(6, 3)
+colnames(geo_pred)[1] <- "Date"
+geo_pred2 <-
+  geo_pred[geo_pred$Date <= "2023-12-31" &
+             geo_pred$Date >= "2023-01-01", ]
+Month <- as.Date(cut(geo_pred2$Date, "month"))
+geo_predm <- aggregate(geo_pred2$GPRD ~ Month, geo_pred2, mean)
+colnames(geo_predm)[2] <- "GPRH"
+geo_predm$GPRH <- as.numeric(geo_predm$GPRH)
+geo_predm <- rbind(geo_m[, 1:2], geo_predm) #2005/01/01 2023/12/01
+#Renixx index
+Renixx_pred <-
+  read.csv("Data forecasting/Renixx_pred.csv",
+           header = TRUE,
+           comment.char = "#")
+Renixx_pred$date <- ymd(Renixx_pred$date)
+Month <- as.Date(cut(Renixx_pred$date, "month"))
+Renixx_predm <- aggregate(close ~ Month, Renixx_pred, mean)
+Renixx_predm <- rbind(renixx_m[, 1:2], Renixx_predm) #2005/01/01 2023/12/01
+#Dataset
+data_pred <-
+  data.frame(
+    log(Renixx_predm$close),
+    log(MSCI_predm$Price),
+    log(geo_predm$GPRH),
+    log(GEPUCURRENT_pred$GEPUCURRENT),
+    log(Oil_predm$Price),
+    log(Energy_ipred[13:240, 3]),
+    log(Energy_spred[13:240, 3]),
+    log(Green_energy_pred[13:240, 3]),
+    log(Global_warming_pred[13:240, 3]),
+    log(Natural_disaster_pred[13:240, 3]),
+    log(Carbon_price_pred[13:240, 3]),
+    log(Carbon_tax_pred[13:240, 3]),
+    log(New_tech_pred[13:240, 3]),
+    Green_energy_pred[13:240, 1] #Date
+  )[121:228, ] #2015/01/01 2023/12/01 and log trasformation
+colnames(data_pred) <-
+  c(
+    'Renixx',
+    'MSCI',
+    'Geop',
+    'EPU',
+    'Oil_p',
+    'Energy_i',
+    'Energy_s',
+    'Green_e',
+    'Global_w',
+    'Natural_d',
+    'Carbon_p',
+    'Carbon_t',
+    'Tech',
+    'Date'
+  )
+rownames(data_pred) <- NULL
+```
+
+```{r, warning=FALSE}
+#Iterative short-term forecasts
+iteration <- 12
+models <- 5
+sample <- length(data_pred[, 1])
+predictions_uni <- as.data.frame(matrix(nrow = iteration, ncol = models))
+colnames(predictions_uni) <-
+  c('ARIMA', 'BSTS', 'ARIMAX', 'ARIMAX2', 'VECM')
+up_uni <- as.data.frame(matrix(nrow = iteration, ncol = models))
+colnames(up_uni) <- c('ARIMA', 'BSTS', 'ARIMAX', 'ARIMAX2', 'VECM')
+lower_uni <- as.data.frame(matrix(nrow = iteration, ncol = models))
+colnames(lower_uni) <- c(c('ARIMA', 'BSTS', 'ARIMAX', 'ARIMAX2', 'VECM'))
+```
+
+The variables used in the ARIMAX model are selected based on Pearson's correlation coefficient for actual values and a multivariate Granger causality test for lagged values.
+
+```{r}
+#Granger causality (multivariate)
+vm = VAR(data_pred[1:96, c(1:13)],
+         p = 1,
+         type = 'both',
+         season = 12)
+granger_causality(vm)
+#Correlationplot
+corrplot.mixed(cor(data_pred[1:96, 1:13]))
+#Instantaneous causality
+vm = VAR(data_pred[1:96, c(1, 6:8)],
+         p = 1,
+         type = 'trend',
+         season = 12)
+causality(vm, cause = "Renixx")
+```
+
+```{r, warning=FALSE}
+#Arima
+all_series <- ts(data_pred, start = c(2015, 1), frequency = 12)
+for (i in 96:(sample - 1)) {
+  arima <- auto.arima(all_series[1:i, c('Renixx')], seasonal = TRUE)
+  pred_arima <- forecast::forecast(arima, h = 1)
+  predictions_uni[(i - 96 + 1), 1] <- pred_arima$mean
+  lower_uni[(i - 96 + 1), 1] <- pred_arima$lower[, 2]
+  up_uni[(i - 96 + 1), 1] <- pred_arima$upper[, 2]
+}
+```
+
+```{r}
+#BSTS
+for (i in 96:(sample - 1)) {
+  #lag
+  (ss <- list())
+  ss <- AddAutoAr(ss, data_pred[1:i, c('Renixx')], lags = 1) #p=1 default
+  ss <- AddLocalLevel(ss, data_pred[1:i, c('Renixx')])
+  ss <- AddSeasonal(ss, data_pred[1:i, c('Renixx')], nseasons = 12)
+  bsts.model2 <- bsts(
+    data_pred[1:i, c('Renixx')],
+    state.specification = ss,
+    niter = 1000,
+    #number of MCMC draws
+    ping = 0,
+    seed = 2016,
+    expected.model.size = 3
+  )
+  burn <- SuggestBurn(0.1, bsts.model2) #Suggested burning 0.1
+  pred_bayesian2 <-
+    predict(
+      bsts.model2,
+      data_pred[(i + 1), ],
+      horizon = 1,
+      burn = burn,
+      quantiles = c(.025, .975)
+    )
+  ##Saving
+  predictions_uni[(i - 96 + 1), 2] <- pred_bayesian2$mean
+  lower_uni[(i - 96 + 1), 2] <- pred_bayesian2$interval[1, ]
+  up_uni[(i - 96 + 1), 2] <- pred_bayesian2$interval[2, ]
+}
+```
+
+```{r, warning=FALSE}
+#Arimax with lagged values
+data_pred2 <-
+  cbind(data_pred$Renixx, lag(data_pred[, c(6)]))[2:length(data_pred[, 1]), ] #lagged values to prevent overconfidence
+rownames(data_pred2) <- NULL
+colnames(data_pred2) <- c('Renixx', 'Energy_i')
+all_series <- ts(data_pred2, start = c(2015, 2), frequency = 12)
+for (i in (96 - 1):(sample - 1 - 1)) {
+  arimax <-
+    auto.arima(all_series[1:i, 1], seasonal = TRUE, xreg = all_series[1:i, c('Energy_i')])
+  new <- matrix(all_series[(i + 1), c('Energy_i')], ncol = 1)
+  colnames(new) <- c('Energy_i')
+  pred_arimax <- forecast::forecast(arimax, xreg = new)
+  predictions_uni[(i - (96 - 1) + 1), 3] <- pred_arimax$mean
+  lower_uni[(i - (96 - 1) + 1), 3] <- pred_arimax$lower[, 2]
+  up_uni[(i - (96 - 1) + 1), 3] <- pred_arimax$upper[, 2]
+}
+```
+
+```{r}
+#Arimax with current values
+all_series <- ts(data_pred, start = c(2015, 1), frequency = 12)
+for (i in 96:(sample - 1)) {
+  x <- matrix(all_series[1:i, c('Green_e', 'Energy_i', 'Energy_s')], ncol =
+                3)
+  colnames(x) <- c('Green_e', 'Energy_i', 'Energy_s')
+  arimax <- auto.arima(all_series[1:i, 1], xreg = x, seasonal = TRUE)
+  new <-
+    matrix(all_series[(i + 1), c('Green_e', 'Energy_i', 'Energy_s')], ncol =
+             3)
+  colnames(new) <- c('Green_e', 'Energy_i', 'Energy_s')
+  pred_arimax <- forecast::forecast(arimax, xreg = new)
+  predictions_uni[(i - 96 + 1), 4] <- pred_arimax$mean
+  lower_uni[(i - 96 + 1), 4] <- pred_arimax$lower[, 2]
+  up_uni[(i - 96 + 1), 4] <- pred_arimax$upper[, 2]
+}
+```
+
+```{r, warning=FALSE}
+#VECM
+for (i in 96:(sample - 1)) {
+  all_series <-
+    ts(data_pred[1:i, c('Renixx', 'Energy_i')], start = c(2015, 1), frequency =
+         12)
+  #lag order
+  var <-
+    VARselect(all_series,
+              type = "both",
+              lag.max = 12,
+              season = 12)
+  p <- var$selection["FPE(n)"]
+  #Estimation of the VAR
+  var_all = VAR(all_series, p, season = 12, type = 'both') #3 for cointegration
+  #Cointegration test
+  nlags = max((p - 1), 2)
+  jotest_all = ca.jo(
+    all_series,
+    type = "eigen",
+    K = nlags,
+    ecdet = "trend",
+    spec = "transitory",
+    season = 12
+  )
+  summary(jotest_all)
+  jotest_all = ca.jo(
+    all_series,
+    type = "trace",
+    K = nlags,
+    ecdet = "trend",
+    spec = "transitory",
+    season = 12
+  )
+  summary(jotest_all)
+  #Cointegration level
+  print(sum(jotest_all@teststat > jotest_all@cval[, 2]))
+  #VECM
+  y.VEC <-
+    cajorls(jotest_all, r = sum(jotest_all@teststat > jotest_all@cval[, 2]))
+  #VECM to VAR
+  v0.VAR <-
+    vec2var(jotest_all, r = sum(jotest_all@teststat > jotest_all@cval[, 2]))
+  #Probability forecasts
+  pred_var <- predict(v0.VAR, n.ahead = 1)
+  predictions_uni[(i - 96 + 1), 5] <- pred_var$fcst$Renixx[, 1]
+  lower_uni[(i - 96 + 1), 5] <- pred_var$fcst$Renixx[, 2]
+  up_uni[(i - 96 + 1), 5] <- pred_var$fcst$Renixx[, 3]
+}
+```
+
+Below, the metrics of the model are reported, along with some robustness checks.
+
+```{r, warning=FALSE}
+#SMAPE
+Metrics::smape(predictions_uni[, 1], data_pred$Renixx[97:108]) * 100 #by 100 to obtain the percentage
+Metrics::smape(predictions_uni[, 2], data_pred$Renixx[97:108]) * 100
+Metrics::smape(predictions_uni[, 3], data_pred$Renixx[97:108]) * 100
+Metrics::smape(predictions_uni[, 4], data_pred$Renixx[97:108]) * 100
+Metrics::smape(predictions_uni[, 5], data_pred$Renixx[97:108]) * 100
+#RMSE
+Metrics::rmse(predictions_uni[, 1], data_pred$Renixx[97:108])
+Metrics::rmse(predictions_uni[, 2], data_pred$Renixx[97:108])
+Metrics::rmse(predictions_uni[, 3], data_pred$Renixx[97:108])
+Metrics::rmse(predictions_uni[, 4], data_pred$Renixx[97:108])
+Metrics::rmse(predictions_uni[, 5], data_pred$Renixx[97:108])
+```
+
+```{r, warning=FALSE}
+#DM test
+m <- predictions_uni - data_pred$Renixx[97:108]
+#ARIMAX lagged-values
+dm.test(m[, 1], m[, 3], alternative =  "greater", h = 1) #h=1 default value of the function
+dm.test(m[, 2], m[, 3], alternative =  "greater", h = 1)
+dm.test(m[, 4], m[, 3], alternative =  "greater", h = 1)
+#ARIMAX actual data
+dm.test(m[, 1], m[, 4], alternative =  "greater", h = 1)
+dm.test(m[, 2], m[, 4], alternative =  "greater", h = 1)
+dm.test(m[, 3], m[, 4], alternative =  "greater", h = 1)
+```
+
+Finally, the results of the best model are plotted below.
+
+```{r, warning=FALSE}
+#Plot
+ggplot(data_pred[65:sample, ], aes(x = as.Date(Date), y = Renixx), ) +
+  geom_line(aes(
+    y = c(data_pred$Renixx[65:96], predictions_uni[, 4]),
+    color = 'Prediction'
+  )) +
+  geom_ribbon(
+    aes(
+      ymin = c(data_pred$Renixx[65:96], lower_uni[, 4]),
+      ymax = c(data_pred$Renixx[65:96], up_uni[, 4])
+    ),
+    alpha = 0.1,
+    fill = "green",
+    color = "green",
+    linetype = "dotted"
+  ) +
+  geom_line(aes(color = 'Real data')) +
+  labs(title = 'ARIMAX,one step ahead') + xlab('Time') + ylab('Log-price') +
+  scale_color_manual(
+    name = 'Legend',
+    breaks = c('Real data', 'Prediction'),
+    values = c(
+      'Real data' = 'black',
+      'Prediction' = 'darkgreen'
+    )
+  )
+coeftest(arimax) #ARIMAX model with actual value, last iteration
+```
