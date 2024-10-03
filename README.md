@@ -10,7 +10,7 @@ employed to identify green bubbles within time series data. Furthermore, search 
 social factors are incorporated into established econometric models to reveal potential implications
 for the financial system. Inspired by Joseph Schumpeter’s perspectives on business cycles, this study
 recognizes green bubbles as a “necessary evil” for facilitating a successful transition towards a more
-sustainable future
+sustainable future.
 
   # Info
 The repository includes the following folders,
