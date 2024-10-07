@@ -14,8 +14,10 @@ sustainable future.
 
   # Info
 The repository includes the following folders,
-* *[Working paper](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Working%20paper)* 
-* *[Code](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Code)*
+* *[Working paper](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Working%20paper)* \
+    Dataset and code for the empirical analysis.
+* *[Code](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Code)* \
+   Files related to the working paper.
 
 [RENIXX World - Global Stock Index](https://www.renewable-energy-industry.com/stocks/)
 
