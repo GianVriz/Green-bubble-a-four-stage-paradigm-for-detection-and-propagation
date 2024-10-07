@@ -1,9 +1,9 @@
 # Abstract
-Climate change has emerged as a significant global concern attracting increasing attention worldwide.
+Climate change has emerged as a significant global concern, attracting increasing attention worldwide.
 While green bubbles may be examined through a social bubble hypothesis, it is essential not to neglect
-a “Climate Minsky” moment triggered by sudden asset price changes. The significant increase in green
-investments highlights the urgent need for a comprehensive understanding of these market dynamics.
-Therefore, the current paper introduces a novel paradigm for studying such phenomena.
+a “Climate Minsky” moment triggered by sudden asset price changes. The significant increase in
+green investments highlights the urgent need for a comprehensive understanding of these market
+dynamics. Therefore, the current paper introduces a novel paradigm for studying such phenomena.
 
 Focusing on the renewable energy sector, Statistical Process Control (SPC) methodologies are
 employed to identify green bubbles within time series data. Furthermore, search volume indexes and
