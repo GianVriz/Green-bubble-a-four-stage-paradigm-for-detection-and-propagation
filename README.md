@@ -5,9 +5,10 @@ Focusing on the renewable energy sector, Statistical Process Control (SPC) metho
   # Info
 The repository includes the following folders,
 * *[Working paper](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Working%20paper)* \
-    Data and code used for simulations and analysis. 
+    Files related to the working paper.
+ 
 * *[Code](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Code)* \
-   Files related to the working paper.
+  Code used for simulations and analysis.
 
 [RENIXX World - Global Stock Index](https://www.renewable-energy-industry.com/stocks/)
 
