@@ -9,6 +9,9 @@ The repository includes the following folders,
 * *[Code](https://github.com/GianVriz/Green-bubble-detection-and-propagation-in-the-energy-market/tree/main/Code)* \
   Code used for simulations and analysis.
 
+ * *[Data](https://github.com/GianVriz/Green-bubble-a-four-stage-paradigm-for-detection-and-propagation/tree/main/Data)* \
+   Data related to the working paper.
+
 [RENIXX World - Global Stock Index](https://www.renewable-energy-industry.com/stocks/)
 
 [Energy Index - Google Trends](https://trends.google.it/trends/explore?date=all&q=Energy%20index&hl=it)
